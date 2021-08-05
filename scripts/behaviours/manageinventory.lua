@@ -69,18 +69,24 @@ function ManageInventory:FreeUpSpace()
    
    print("Free up space!")
    
-   -- We're completely full. Lets eat some food first to make some space
-   -- Just call this directly
-   --self.inst.components.eater:Eat(obj)
-
+   -- We're completely full. We don't want to eat food if we don't have to. 
+   -- Can we put items in Chester? Don't put items in chest since we don't want to accidentally trigger traps.
+   -- Putting items in chests can come later once we know we're at home.
+   if self.inst.components.inventory:Has("eyebone", 1) == true then
+      -- TODO: Put items in Chester!
+      print("TODO: Put items in Chester")
+   end
+   --What item can we eat that minimizes impact?
+   self:BackpackManagement()
    local allFoodInInventory = self.inst.components.inventory:FindItems(function(item) return 
                         self.inst.components.eater:CanEat(item) and 
                         item.components.edible:GetHunger(self.inst) >= 0 and
                         item.components.edible:GetHealth(self.inst) >= 0 and
-                        item.components.edible:GetSanity(self.inst) >= 0 and
-                        ((item.components.stackable and item.components.stackable:StackSize() == 1) or 
-                           (not item.components.stackable))
+                        item.components.edible:GetSanity(self.inst) >= 0 
+                        -- and ((item.components.stackable and item.components.stackable:StackSize() == 1) or (not item.components.stackable))
                         end)
+
+   --print("All food in inventory: " .. tostring(allFoodInInventory) )
    
    local healthMissing = self.inst.components.health:GetMaxHealth() - self.inst.components.health.currenthealth
    local hungerMissing = self.inst.components.hunger.max - self.inst.components.hunger.current
@@ -88,8 +94,8 @@ function ManageInventory:FreeUpSpace()
 
    -- Eat one of them!
    for k,v in pairs(allFoodInInventory) do
-      print(v.prefab)
-      local h = v.components.edible:GetHunger(self.inst)
+      --print(v.prefab)
+      local h = v.components.edible:GetHunger(self.inst) 
       local s = v.components.edible:GetSanity(self.inst)
       local he = v.components.edible:GetHealth(self.inst)
       
@@ -111,15 +117,27 @@ function ManageInventory:FreeUpSpace()
    
    -- We didn't eat anything...just eat the first one
    if next(allFoodInInventory) ~= nil then
+      print("Eating random food... Yikes")
       local i,v = next(allFoodInInventory)
       self.inst.components.eater:Eat(v)
       return
    end
    
-   -- We have no single foods. Drop something useles?
+   -- We have no single foods. Drop something useless?
 
    
 end
+
+-- If there's a chest nearby, store stuff. 
+-- ....should make sure this is our own chest next to a science machine lol
+-- function ManageInventory:ChestManagement()
+
+--    local scienceMachine = FindEntity(self.inst, 10, function(item) return item.prefab and item.prefab == "researchlab" end)
+--    if not scienceMachine then return end
+
+--    local chest = FindEntity(self.inst, 10, function(item) return item.prefab and item.prefab == "treasurechest" end)
+--    if not chest then return end
+-- end
 
 function ManageInventory:Visit()
 

@@ -37,7 +37,24 @@ function ManageHunger:Visit()
 								item.components.edible:GetHunger(self.inst) > 0 and
 								item.components.edible:GetHealth(self.inst) >= 0 and
 								item.components.edible:GetSanity(self.inst) >= 0 end)
-		
+
+		-- Calculate the total amount of hunger we have available as food.
+		local TotalHunger = 0
+		for i,j in pairs(allFoodInInventory) do
+			if j.components.stackable:StackSize() ~= nil then
+				TotalHunger = TotalHunger + (j.components.edible:GetHunger(self.inst) * j.components.stackable:StackSize())
+				-- print("amount of " .. j.prefab .. ": " .. j.components.stackable:StackSize())
+			end
+		end
+		print("Total Hunger before consuming: " .. TotalHunger)	
+		if TotalHunger >= 200 then
+			self.inst.components.prioritizer:AddToIgnoreList("carrot")
+			self.inst.components.prioritizer:AddToIgnoreList("ice")
+		else if TotalHunger <= 150 then
+			self.inst.components.prioritizer:RemoveFromIgnoreList("carrot")
+			self.inst.components.prioritizer:RemoveFromIgnoreList("ice")			
+			end
+		end
 		local bestFoodToEat = nil
 		for k,v in pairs(allFoodInInventory) do
 			if bestFoodToEat == nil then

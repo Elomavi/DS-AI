@@ -63,8 +63,25 @@ local BUILD_PRIORITY = {
 		"backpack",
 		"firepit",
 		"cookpot",
+		"trap",
+		--"trap_teeth",
+		--"lightningrod",
+		--"meatrack",
+		--"researchlab2",
+		"treasurechest"
 }
 
+ -- For no DLC games. TODO: How to automatically switch?
+--[[ local BUILD_PRIORITY = {
+	"researchlab2",
+	"backpack",
+	"spear",
+	"firepit",
+	"trap",
+	"trap_teeth",
+	"meatrack",
+	"treasurechest"
+} ]]
 -- The BUILD_PRIORITY contains the index into the build info table
 -- which stores the important info. Otherwise you cannot control
 -- the table ordering.

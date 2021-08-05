@@ -33,9 +33,13 @@ function ManageSanity:Visit()
       -- Don't bother picking up flowers until our sanity starts dropping
       if currentSanity < targetSanity*.95 and self.inst.components.prioritizer:OnIgnoreList("petals") then
          self.inst.components.prioritizer:RemoveFromIgnoreList("petals")
+         self.inst.components.prioritizer:RemoveFromIgnoreList("green_cap")
+         self.inst.components.prioritizer:RemoveFromIgnoreList("cactus_meat")
       elseif currentSanity >= math.max(1,targetSanity*1.05) and not self.inst.components.prioritizer:OnIgnoreList("petals") then
          --self.inst.brain:AddToIgnoreList("petals")
          self.inst.components.prioritizer:AddToIgnoreList("petals")
+         self.inst.components.prioritizer:AddToIgnoreList("green_cap")
+         self.inst.components.prioritizer:AddToIgnoreList("cactus_meat")
       end
       
       -- Until we get to below some value...don't do anything.
