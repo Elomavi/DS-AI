@@ -22,6 +22,7 @@ require "behaviours/manageinventory"
 require "behaviours/gordonramsay"
 require "behaviours/dontbeonfire"
 require "behaviours/findthingtoburn"
+require "behaviours/kitemaster"
 
 require "brains/ai_build_helper"
 require "brains/ai_combat_helper"
@@ -29,9 +30,9 @@ require "brains/ai_inventory_helper"
 
 local MIN_SEARCH_DISTANCE = 10
 local MAX_SEARCH_DISTANCE = 100
-local SEARCH_SIZE_STEP = 10
-local RUN_AWAY_SEE_DIST = 8
-local RUN_AWAY_STOP_DIST = 15
+local SEARCH_SIZE_STEP = 15
+local RUN_AWAY_SEE_DIST = 6
+local RUN_AWAY_STOP_DIST = 8
 local CurrentSearchDistance = MIN_SEARCH_DISTANCE
 
 -- What to gather. This is a simple FIFO. Highest priority will be first in the list.
@@ -172,109 +173,10 @@ local function CanIBuildThis(player, thingToBuild, numToBuild, recursive)
 	return true
 end
 
--- Should only be called after the above call to ensure we can build it.
-local function OldBuildThis(player, thingToBuild, pos)
-	local recipe = GetRecipe(thingToBuild)
-	-- not a real thing
-	if not recipe then return end
-
-	print("BuildThis called with " .. thingToBuild)
-
-	-- This should not be called without checking to see if we can build something
-	-- we have to unlock the recipe here. It is usually done with a mouse event when a player
-	-- goes to build something....so I assume if we got here, we can actually unlock the recipe
-	-- Actually, Do this in the callback so we don't unlock it unless successful
-	--if not player.components.builder:KnowsRecipe(thingToBuild) then
-	--	print("Unlocking recipe")
-	--	player.components.builder:UnlockRecipe(thingToBuild)
-	--end
-
-	-- Don't run if we're still buffer building something else
-	if player.currentBufferedBuild ~= nil then
-		print("Not building " .. thingToBuild .. " as we are still building " .. player.currentBufferedBuild)
-		return
-	end
-
-	-- Save this. We'll catch the 'buildfinished' event and if it is this, we'll remove it.
-	-- Will also remove it in watchdog
-	player.currentBufferedBuild = thingToBuild
-
-	-- TODO: Make sure the pos supplied is valid place to build this thing. If not, get a new one.
-	--if pos ~= nil then
-	--	local maxLoops = 5
-	--	while not player.components.builder:CanBuildAtPoint(pos,thingToBuild) and maxLoops > 0 then
-	--		local offset,result_angle,deflected = FindWalkableOffset(pos, angle,radius,8,true,false)
-	--		maxLoops = maxLoops - 1
-	--	end
-	--end
-
-	-- Called back from the MakeRecipe function...will unlock the recipe if successful
-	local onsuccess = function()
-		player.components.builder:UnlockRecipe(thingToBuild)
-	end
-
-	if not player.itemsNeeded or #player.itemsNeeded == 0 then
-		print("itemsNeeded is empty!")
-	end
-
-	for k,v in pairs(player.itemsNeeded) do print(k,v) end
-
-	-- TODO: Make sure we have the inventory space!
-	for k,v in pairs(player.itemsNeeded) do
-		-- Just go down the list. If level > 0, we need to build it
-		if v.level > 0 and v.toMake then
-			-- We should be able to build this...
-			print("Trying to build " .. v.toMake)
-			while v.toMakeNum > 0 do
-				if player.components.builder:CanBuild(v.toMake) then
-
-					local action = BufferedAction(player,nil,ACTIONS.BUILD,nil,pos,v.toMake,nil)
-					player:PushBufferedAction(action)
-					--player.components.locomotor:PushAction(action)
-					--player.components.builder:MakeRecipe(GetRecipe(v.toMake),pos,onsuccess)
-					v.toMakeNum = v.toMakeNum - 1
-				else
-					print("Uhh...we can't make " .. v.toMake .. "!!!")
-					player.currentBufferedBuild = nil
-					return
-				end
-			end
-		end
-	end
-
-	--[[
-	if player.components.builder:MakeRecipe(GetRecipe(thingToBuild),pos,onsuccess) then
-		print("MakeRecipe succeeded")
-	else
-		print("Something is messed up. MakeRecipe failed!")
-		player.currentBufferedBuild = nil
-	end
-	--]]
-
-
-	if player.components.builder:CanBuild(thingToBuild) then
-		print("We have all the ingredients...time to make " .. thingToBuild)
-
-		local action = BufferedAction(player,player,ACTIONS.BUILD,nil,pos,thingToBuild,nil)
-		print("Pushing action to build " .. thingToBuild)
-		print(action:__tostring())
-		--player.components.builder:MakeRecipe(thingToBuild,pos,onsuccess)
-		player:PushBufferedAction(action)
-	else
-		print("Something is messed up. We can't make " .. thingToBuild .. "!!!")
-		player.currentBufferedBuild = nil
-	end
-
-end
-
-
 ------------------------------------------------------------------------------------------------
-
 local ArtificalBrain = Class(Brain, function(self, inst)
     Brain._ctor(self,inst)
 end)
-
-
 
 ------------------------------------------------------------
 
@@ -534,7 +436,13 @@ end
 local function MidwayThroughDusk()
 	local clock = GetClock()
 	local startTime = clock:GetDuskTime()
-	return clock:IsDusk() and (clock:GetTimeLeftInEra() < startTime/4)
+	return clock:IsDusk() and (clock:GetTimeLeftInEra() < startTime/8)
+end
+
+-- There are 30 time units per segment. So want this to trigger on the last segment of dusk. 
+local function TimeToFindLight()
+	local clock = GetClock()
+	return clock:IsNight() or (clock:IsDusk() and (clock:GetTimeLeftInEra() <= 5))
 end
 
 local function IsBusy(inst)
@@ -612,6 +520,8 @@ end
 function ArtificalBrain:OnStart()
 	local clock = GetClock()
 
+	self.used_wormhole_today = false
+
 	-- These are added in playerPostInit in modmain
 	--self.inst:AddComponent("cartographer")
 	--self.inst:AddComponent("prioritizer")
@@ -625,15 +535,23 @@ function ArtificalBrain:OnStart()
 	self.inst:ListenForEvent("actionfailed", OnActionFailed)
 
 	-- TODO: Make this a brain function so we can manage it dynamically
-	self.inst.components.prioritizer:AddToIgnoreList("seeds")
+	self.inst.components.prioritizer:AddToIgnoreList("cutreeds") -- Will need it eventually, but not atm
+	self.inst.components.prioritizer:AddToIgnoreList("cactus_meat")
 	self.inst.components.prioritizer:AddToIgnoreList("petals_evil")
+	self.inst.components.prioritizer:AddToIgnoreList("poop")
+	self.inst.components.prioritizer:AddToIgnoreList("nightmarefuel")
 	self.inst.components.prioritizer:AddToIgnoreList("marsh_tree")
 	self.inst.components.prioritizer:AddToIgnoreList("marsh_bush")
 	self.inst.components.prioritizer:AddToIgnoreList("tallbirdegg")
 	self.inst.components.prioritizer:AddToIgnoreList("pinecone")
 	self.inst.components.prioritizer:AddToIgnoreList("red_cap")
+	self.inst.components.prioritizer:AddToIgnoreList("green_cap")
+	self.inst.components.prioritizer:AddToIgnoreList("blue_cap")
+	self.inst.components.prioritizer:AddToIgnoreList("marble")
+	self.inst.components.prioritizer:AddToIgnoreList("shovel")
 	self.inst.components.prioritizer:AddToIgnoreList("nitre") -- Make sure to have a brain fcn add this when ready to collect it
 	self.inst.components.prioritizer:AddToIgnoreList("ash")
+	self.inst.components.prioritizer:AddToIgnoreList("rabbithole")
 	self.inst.components.prioritizer:AddToIgnoreList("ice") -- Will need it eventually...just not soon
 	self.inst.components.prioritizer:AddToIgnoreList("cave_entrance") --We're not going down...quit letting the bats out idiot!
 	self.inst.components.prioritizer:AddToIgnoreList("livinglog") -- Won't need these for a while
@@ -642,10 +560,16 @@ function ArtificalBrain:OnStart()
 	-- If we don't have a home, find a science machine nearby to call home.
 	if not HasValidHome(self.inst) then
 		local scienceMachine = FindEntity(self.inst, 150, function(item) return item.prefab and item.prefab == "researchlab" end)
-		if scienceMachine then
+		local scienceMachine2 = FindEntity(self.inst, 150, function(item) return item.prefab and item.prefab == "researchlab2" end)
+		if scienceMachine2 then
+			print("Found our home at an Alchemy Engine!")
+			self.inst.components.homeseeker:SetHome(scienceMachine2)
+		else if scienceMachine then
 			print("Found our home!")
 			self.inst.components.homeseeker:SetHome(scienceMachine)
+			end
 		end
+		
 	end
 
 	-- Things to do during the day
@@ -657,7 +581,8 @@ function ArtificalBrain:OnStart()
 
 			-- If there's a touchstone nearby, activate it
 			IfNode(function() return not IsBusy(self.inst) end, "notBusy_lookforTouchstone",
-				FindAndActivate(self.inst, 25, "resurrectionstone")),
+				FindAndActivate(self.inst, 25, function(item) return item.prefab == "resurrectionstone" and
+					item.components.activatable and item.components.activatable.inactive end, ACTIONS.ACTIVATE)),
 
 			-- Find a good place to call home
 			IfNode( function() return not HasValidHome(self.inst) end, "no home",
@@ -674,20 +599,20 @@ function ArtificalBrain:OnStart()
 				IfNode( function() return not IsBusy(self.inst) end, "notBusy_goMine",
 					FindTreeOrRock(self.inst,  function() return self:GetCurrentSearchDistance() end, ACTIONS.MINE)),
 		      -- Should maybe stick around and wait for this thing to finish burning...he just
-            -- kind of runs away...
-            IfNode( function() return not IsBusy(self.inst) end, "notBusy_goBurn",
-               FindThingToBurn(self.inst, function() return self:GetCurrentSearchDistance() end)),
+				-- kind of runs away...
+				IfNode( function() return not IsBusy(self.inst) end, "notBusy_goBurn",
+				FindThingToBurn(self.inst, function() return self:GetCurrentSearchDistance() end)),
 
-					-- Finally, if none of those succeed, increase the search distance for
-					-- the next loop.
-					-- Want this to fail always so we don't increase to max.
+				-- Finally, if none of those succeed, increase the search distance for
+				-- the next loop.
+				-- Want this to fail always so we don't increase to max.
 				IfNode( function() return not IsBusy(self.inst) end, "nothing_to_do",
 					NotDecorator(ActionNode(function() return self:IncreaseSearchDistance() end))),
 			},
 
 			-- TODO: Need a good wander function for when searchdistance is at max.
-			IfNode(function() return not IsBusy(self.inst) and CurrentSearchDistance == MAX_SEARCH_DISTANCE end, "maxSearchDistance",
-				FindAndActivate(self.inst, 500, "wormhole")),
+			IfNode(function() return not self.used_wormhole_today and not IsBusy(self.inst) and self:GetCurrentSearchDistance() >= MAX_SEARCH_DISTANCE end, "maxSearchDistance",
+				FindAndActivate(self.inst, 500, function(item) return item.prefab == "wormhole" end, ACTIONS.JUMPIN)),
 
 		},.25)
 
@@ -721,11 +646,9 @@ function ArtificalBrain:OnStart()
 					NotDecorator(ActionNode(function() return self:IncreaseSearchDistance() end))),
 			},
 
-			-- This is super hacky.
-			IfNode(function() return not IsBusy(self.inst) and CurrentSearchDistance == MAX_SEARCH_DISTANCE end, "maxSearchDistance",
-				DoAction(self.inst, function() return FindSomewhereNewToGo(self.inst) end, "lookingForSomewhere", true)),
-			-- No plan...just walking around
-			--Wander(self.inst, nil, 20),
+			IfNode(function() return not self.used_wormhole_today and not IsBusy(self.inst) and self:GetCurrentSearchDistance() >= MAX_SEARCH_DISTANCE end, "maxSearchDistance",
+				FindAndActivate(self.inst, 500, function(item) return item.prefab == "wormhole" end, ACTIONS.JUMPIN)),
+
         },.2)
 
 		-- Behave slightly different half way through dusk
@@ -738,6 +661,25 @@ function ArtificalBrain:OnStart()
 
 			IfNode( function() return HasValidHome(self.inst) end, "try to go home",
 				DoAction(self.inst, function() return GoHomeAction(self.inst) end, "go home", true)),
+
+			-- If we don't have a home, go about our business I guess
+			-- SelectorNode{
+
+			-- 	IfNode( function() return not IsBusy(self.inst) end, "notBusy_goPickup",
+			-- 		FindResourceOnGround(self.inst,  function() return self:GetCurrentSearchDistance() end)),
+
+			-- 	IfNode( function() return not IsBusy(self.inst) end, "notBusy_goChop",
+			-- 		FindTreeOrRock(self.inst,  function() return self:GetCurrentSearchDistance() end, ACTIONS.CHOP)),
+
+			-- 	IfNode( function() return not IsBusy(self.inst) end, "notBusy_goHarvest",
+			-- 		FindResourceToHarvest(self.inst,  function() return self:GetCurrentSearchDistance() end)),
+
+			-- 	IfNode( function() return not IsBusy(self.inst) end, "notBusy_goMine",
+			-- 		FindTreeOrRock(self.inst,  function() return self:GetCurrentSearchDistance() end, ACTIONS.MINE)),
+
+			-- 	IfNode( function() return not IsBusy(self.inst) end, "nothing_to_do",
+			-- 		NotDecorator(ActionNode(function() return self:IncreaseSearchDistance() end))),
+			-- },
 
 			-- If we don't have a home...just
 				--IfNode( function() return AtHome(self.inst, 4) end, "am home",
@@ -758,7 +700,8 @@ function ArtificalBrain:OnStart()
 
 			-- Make sure there's light!
 			-- Moved this higher in the brain
-			--MaintainLightSource(self.inst, 30),
+
+			-- Debug
 
 			CookFood(self.inst,10),
 
@@ -815,7 +758,7 @@ function ArtificalBrain:OnStart()
 			DontBeOnFire(self.inst),
 
 			--
-			WhileNode(function() return clock and clock:IsNight() end, "StayInTheLight",
+			WhileNode(function() return TimeToFindLight() end, "StayInTheLight",
 			   MaintainLightSource(self.inst, 30)),
 
 
@@ -827,8 +770,14 @@ function ArtificalBrain:OnStart()
 			-- GoForTheEyes will set our combat target. If it returns true, kill
 			-- TODO: Don't do this at night. He will run out into the darkness and override
 			--       his need to stay in the light!
+
 			WhileNode(function() return not clock:IsNight() and GoForTheEyes(self.inst) end, "GoForTheEyes",
-				ChaseAndAttack(self.inst, 10,30)),
+				KiteMaster(self.inst, 10,30)),
+
+			-- Dodge attacks maybe?
+			-- If our target is not in cooldown, run away? 
+			--WhileNode( function() return self.inst.components.combat.target and self.inst.components.combat:InCooldown() end, "Dodge", 
+			--	RunAway(self.inst, function() return self.inst.components.combat.target end, 4, 8) ),
 			--DoAction(self.inst, function() return GoForTheEyes(self.inst) end, "GoForTheEyes", true),
 
 			-- Always run away from these things
@@ -844,7 +793,6 @@ function ArtificalBrain:OnStart()
 							nil, {"INLIMBO", "notarget"})
 						end, RUN_AWAY_SEE_DIST, RUN_AWAY_STOP_DIST),
 			--SelfPreservation(self.inst,
-
 
 
 			-- Manage rain by making/equipping straw hat
